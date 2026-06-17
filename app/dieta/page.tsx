@@ -113,8 +113,8 @@ export default function DietaPage() {
 
   <span className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded-md font-bold">
     {diasAgrupados[data].totais.k} kcal
-  </span>
-</div>>
+</span>
+</div>
 
               {/* RESUMO DE MACROS DO DIA (ESTILO QUE VOCÊ PEDIU) */}
               <div className="grid grid-cols-3 gap-2 mb-4">
