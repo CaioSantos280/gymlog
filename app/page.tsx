@@ -1,42 +1,48 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { TreinoForm } from '@/components/TreinoForm'
 import { TreinoCard } from '@/components/TreinoCard'
-// 💡 REMOVIDO: import Link from "next/link" (Não estava sendo usado)
+import { Dashboard } from '@/components/Dashboard'
 
-// Definindo uma interface simples para o TypeScript te ajudar no autocomplete
 interface Treino {
   id: string | number
   exercicio: string
+  series: number
+  reps: number
+  peso: number
+  carga_total: number
   created_at: string
-  // adicione outros campos aqui se precisar (ex: carga, repeticoes)
 }
 
 export default function Home() {
-  const [treinos, setTreinos] = useState<Treino[]>([]) // 💡 Tipado como Treino[] em vez de any[]
-  const [busca, setBusca] = useState('') 
+  const [treinos, setTreinos] = useState<Treino[]>([])
+  const [busca, setBusca] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  async function buscarTreinos() {
+  const buscarTreinos = useCallback(async () => {
     const { data, error } = await supabase
       .from('treinos')
       .select('*')
       .order('created_at', { ascending: false })
-    
+
     if (error) {
       console.error('Erro ao buscar treinos:', error.message)
       return
     }
 
-    if (data) setTreinos(data as Treino[])
-  }
-
-  useEffect(() => { 
-    buscarTreinos() 
+    if (data) {
+      setTreinos(data as Treino[])
+      // incrementa refreshKey para a Dashboard recarregar perfil/PRs/pesos também
+      setRefreshKey((k) => k + 1)
+    }
   }, [])
 
-  // Lógica do filtro
+  useEffect(() => {
+    buscarTreinos()
+  }, [buscarTreinos])
+
   const treinosFiltrados = treinos.filter((t) =>
     t.exercicio?.toLowerCase().includes(busca.toLowerCase())
   )
@@ -44,40 +50,52 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white p-6 font-sans">
       <div className="max-w-xl mx-auto py-10">
+
+        {/* ── Header ─────────────────────────────────────────────── */}
         <header className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-4xl font-black text-blue-500 italic tracking-tighter">
               GYMLOG
             </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Track your progress.
-            </p>
+            <p className="text-sm text-gray-500 mt-1">Track your progress.</p>
           </div>
         </header>
 
-        {/* Componente do Formulário */}
+        {/* ── Dashboard ──────────────────────────────────────────── */}
+        <Dashboard treinos={treinos} refreshKey={refreshKey} />
+
+        {/* ── Divisor ────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3 mb-8">
+          <div className="h-px flex-1 bg-white/5" />
+          <p className="text-[10px] uppercase tracking-[0.2em] text-white/25 font-bold">
+            Registrar treino
+          </p>
+          <div className="h-px flex-1 bg-white/5" />
+        </div>
+
+        {/* ── Formulário (inalterado) ─────────────────────────────── */}
         <TreinoForm onSave={buscarTreinos} />
 
-        {/* Input de Busca */}
+        {/* ── Busca no histórico ──────────────────────────────────── */}
         <div className="relative my-8">
-          <input 
+          <input
             type="text"
             placeholder="🔍 Buscar no seu histórico..."
             value={busca}
-            onChange={(e) => setBusca(e.target.value)} 
+            onChange={(e) => setBusca(e.target.value)}
             className="w-full bg-transparent border-b border-white/10 py-3 outline-none focus:border-blue-500 transition-all text-sm"
           />
           {busca && (
-             <button 
-               onClick={() => setBusca('')} 
-               className="absolute right-2 top-3 text-gray-500 hover:text-white"
-             >
-               Limpar
-             </button>
+            <button
+              onClick={() => setBusca('')}
+              className="absolute right-2 top-3 text-gray-500 hover:text-white"
+            >
+              Limpar
+            </button>
           )}
         </div>
 
-        {/* Lista usando o resultado filtrado */}
+        {/* ── Lista de treinos (inalterada) ───────────────────────── */}
         <div className="space-y-4">
           {treinosFiltrados.length > 0 ? (
             treinosFiltrados.map((t) => (
@@ -89,6 +107,7 @@ export default function Home() {
             </p>
           )}
         </div>
+
       </div>
     </main>
   )
