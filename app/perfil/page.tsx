@@ -32,6 +32,7 @@ export default function PerfilPage() {
   const [salvandoAvatar, setSalvandoAvatar] = useState(false)
 
   const carregarDados = useCallback(async () => {
+    setCarregando(true)
     const [perfilData, prsResp, pesosResp, treinosResp] = await Promise.all([
       buscarOuCriarPerfil(),
       supabase.from('prs').select('exercicio, carga, created_at').order('created_at', { ascending: false }),
@@ -39,7 +40,14 @@ export default function PerfilPage() {
       supabase.from('treinos').select('id', { count: 'exact', head: true }),
     ])
 
-    setPerfil(perfilData)
+    if (perfilData) {
+      // Garante que se o nome vier NULL do banco, ele exiba um fallback em vez de quebrar a UI
+      setPerfil({
+        ...perfilData,
+        nome_usuario: perfilData.nome_usuario || 'Atleta'
+      })
+    }
+    
     if (prsResp.data) setPrs(prsResp.data as Pr[])
     if (pesosResp.data) setPesos(pesosResp.data as PesoRegistro[])
     if (typeof treinosResp.count === 'number') setTotalTreinos(treinosResp.count)
@@ -55,7 +63,7 @@ export default function PerfilPage() {
     setSalvandoAvatar(true)
     const sucesso = await salvarAvatarSelecionado(perfil.id, avatar.id)
     if (sucesso) {
-      setPerfil({ ...perfil, avatar_id: avatar.id })
+      setPerfil((prev) => prev ? { ...prev, avatar_id: avatar.id } : null)
     }
     setSalvandoAvatar(false)
   }
@@ -95,10 +103,10 @@ export default function PerfilPage() {
         {/* ── Avatar principal + Rank + XP ─────────────────────────── */}
         <AvatarHero
           avatar={avatarAtual}
-          nomeUsuario={perfil.nome_usuario}
+          nomeUsuario={perfil.nome_usuario || 'Atleta'}
           xpAtual={perfil.xp_atual}
           perfilId={perfil.id}
-          onNomeAtualizado={(novoNome) => setPerfil({ ...perfil, nome_usuario: novoNome })}
+          onNomeAtualizado={(novoNome) => setPerfil((prev) => prev ? { ...prev, nome_usuario: novoNome } : null)}
         />
 
         {/* ── Estatísticas ──────────────────────────────────────────── */}
