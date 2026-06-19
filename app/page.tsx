@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { TreinoForm } from '@/components/TreinoForm'
 import { TreinoCard } from '@/components/TreinoCard'
@@ -59,6 +60,12 @@ export default function Home() {
             </h1>
             <p className="text-sm text-gray-500 mt-1">Track your progress.</p>
           </div>
+          <Link
+            href="/perfil"
+            className="text-xs font-bold text-white/50 hover:text-white border border-white/10 rounded-full px-3.5 py-2 active:scale-95 transition-all"
+          >
+            👤 Perfil
+          </Link>
         </header>
 
         {/* ── Dashboard ──────────────────────────────────────────── */}

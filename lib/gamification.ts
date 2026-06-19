@@ -23,6 +23,8 @@ export interface Perfil {
   rank_nome: string
   streak_dias: number
   ultimo_treino_data: string | null
+  avatar_id: string
+  nome_usuario: string | null
   updated_at: string
 }
 
@@ -115,6 +117,34 @@ async function verificarERegistrarPR(exercicio: string, peso: number): Promise<b
   const { error } = await supabase.from('prs').insert([{ exercicio, carga: peso }])
   if (error) {
     console.error('Erro ao salvar PR:', error.message)
+    return false
+  }
+  return true
+}
+
+/** Atualiza o avatar equipado pelo usuário e persiste no Supabase. */
+export async function salvarAvatarSelecionado(perfilId: string, avatarId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('perfil')
+    .update({ avatar_id: avatarId, updated_at: new Date().toISOString() })
+    .eq('id', perfilId)
+
+  if (error) {
+    console.error('Erro ao salvar avatar:', error.message)
+    return false
+  }
+  return true
+}
+
+/** Atualiza o nome de usuário exibido no perfil. */
+export async function salvarNomeUsuario(perfilId: string, nome: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('perfil')
+    .update({ nome_usuario: nome, updated_at: new Date().toISOString() })
+    .eq('id', perfilId)
+
+  if (error) {
+    console.error('Erro ao salvar nome:', error.message)
     return false
   }
   return true
