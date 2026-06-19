@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Menu, X, BarChart2, Dumbbell, Trophy, Utensils, ClipboardList } from 'lucide-react'
+import { Menu, X, BarChart2, Dumbbell, Trophy, Utensils, ClipboardList, User } from 'lucide-react'
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false)
@@ -13,6 +13,7 @@ export function Navbar() {
     { name: 'Rotina', href: '/treinos', icon: <ClipboardList size={20} /> },
     { name: 'Dieta', href: '/dieta', icon: <Utensils size={20} /> },
     { name: 'Recordes (PRs)', href: '/recordes', icon: <Trophy size={20} /> },
+    { name: 'Perfil', href: '/perfil', icon: <User size={20} /> },
   ]
 
   return (
