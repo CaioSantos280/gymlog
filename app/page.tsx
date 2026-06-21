@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { TreinoForm } from '@/components/TreinoForm'
 import { TreinoCard } from '@/components/TreinoCard'
@@ -21,24 +22,39 @@ export default function Home() {
   const [treinos, setTreinos] = useState<Treino[]>([])
   const [busca, setBusca] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [carregando, setCarregando] = useState(true)
+  const router = useRouter()
 
   const buscarTreinos = useCallback(async () => {
+    // 1. Pega o usuário logado
+    const { data: { user } } = await supabase.auth.getUser()
+
+    // Se não estiver logado, manda de volta para a tela de login
+    if (!user) {
+      router.push('/login')
+      return
+    }
+
+    // 2. Busca treinos pertencentes ao usuário logado ou treinos antigos sem dono (is.null)
     const { data, error } = await supabase
       .from('treinos')
       .select('*')
+      .or(`user_id.eq.${user.id},user_id.is.null`)
       .order('created_at', { ascending: false })
 
     if (error) {
       console.error('Erro ao buscar treinos:', error.message)
+      setCarregando(false)
       return
     }
 
     if (data) {
       setTreinos(data as Treino[])
-      // incrementa refreshKey para a Dashboard recarregar perfil/PRs/pesos também
+      // Incrementa a refreshKey para avisar os componentes filhos de que houve atualização
       setRefreshKey((k) => k + 1)
     }
-  }, [])
+    setCarregando(false)
+  }, [router])
 
   useEffect(() => {
     buscarTreinos()
@@ -47,6 +63,14 @@ export default function Home() {
   const treinosFiltrados = treinos.filter((t) =>
     t.exercicio?.toLowerCase().includes(busca.toLowerCase())
   )
+
+  if (carregando) {
+    return (
+      <main className="min-h-screen bg-[#0a0a0a] text-white p-6 flex flex-col items-center justify-center">
+        <p className="text-gray-400 font-bold animate-pulse">Carregando seus treinos...</p>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white p-6 font-sans">
@@ -68,8 +92,10 @@ export default function Home() {
           </Link>
         </header>
 
-        {/* ── Dashboard ──────────────────────────────────────────── */}
-        <Dashboard treinos={treinos} refreshKey={refreshKey} />
+        <Dashboard
+  treinos={treinos}
+  refreshKey={refreshKey}
+/>
 
         {/* ── Divisor ────────────────────────────────────────────── */}
         <div className="flex items-center gap-3 mb-8">
@@ -80,7 +106,7 @@ export default function Home() {
           <div className="h-px flex-1 bg-white/5" />
         </div>
 
-        {/* ── Formulário (inalterado) ─────────────────────────────── */}
+        {/* ── Formulário ─────────────────────────────────────────── */}
         <TreinoForm onSave={buscarTreinos} />
 
         {/* ── Busca no histórico ──────────────────────────────────── */}
@@ -102,7 +128,7 @@ export default function Home() {
           )}
         </div>
 
-        {/* ── Lista de treinos (inalterada) ───────────────────────── */}
+        {/* ── Lista de treinos ────────────────────────────────────── */}
         <div className="space-y-4">
           {treinosFiltrados.length > 0 ? (
             treinosFiltrados.map((t) => (

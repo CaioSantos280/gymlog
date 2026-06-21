@@ -42,15 +42,35 @@ export function Dashboard({ treinos, refreshKey }: DashboardProps) {
   const [carregando, setCarregando] = useState(true)
 
   const carregarDados = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      setCarregando(false)
+      return
+    }
+
     const [perfilData, prsResp, pesosResp] = await Promise.all([
-      buscarOuCriarPerfil(),
-      supabase.from('prs').select('exercicio, carga, created_at').order('created_at', { ascending: false }),
-      supabase.from('pesos').select('peso_kg, created_at').order('created_at', { ascending: false }),
+      buscarOuCriarPerfil(user.id),
+
+      supabase
+        .from('prs')
+        .select('exercicio, carga, created_at')
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('pesos')
+        .select('peso_kg, created_at')
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .order('created_at', { ascending: false }),
     ])
 
-    setPerfil(perfilData)
+    if (perfilData) setPerfil(perfilData)
     if (prsResp.data) setPrs(prsResp.data as Pr[])
     if (pesosResp.data) setPesos(pesosResp.data as PesoRegistro[])
+
     setCarregando(false)
   }, [])
 
@@ -74,8 +94,12 @@ export function Dashboard({ treinos, refreshKey }: DashboardProps) {
 
   const totalTreinos = treinos.length
   const totalPrs = prs.length
+
   const primeiroTreinoData =
-    treinos.length > 0 ? treinos[treinos.length - 1].created_at : null
+    treinos.length > 0
+      ? treinos[treinos.length - 1].created_at
+      : null
+
   const ultimoTreino = treinos[0] ?? null
   const ultimoPr = prs[0] ?? null
   const pesoAtual = pesos[0]?.peso_kg ?? null
@@ -87,8 +111,22 @@ export function Dashboard({ treinos, refreshKey }: DashboardProps) {
       <QuickStats
         streakDias={perfil?.streak_dias ?? 0}
         pesoAtual={pesoAtual}
-        ultimoPr={ultimoPr ? { exercicio: ultimoPr.exercicio, carga: ultimoPr.carga } : null}
-        ultimoTreino={ultimoTreino ? { exercicio: ultimoTreino.exercicio, created_at: ultimoTreino.created_at } : null}
+        ultimoPr={
+          ultimoPr
+            ? {
+                exercicio: ultimoPr.exercicio,
+                carga: ultimoPr.carga,
+              }
+            : null
+        }
+        ultimoTreino={
+          ultimoTreino
+            ? {
+                exercicio: ultimoTreino.exercicio,
+                created_at: ultimoTreino.created_at,
+              }
+            : null
+        }
       />
 
       <ResumoGeral
@@ -98,7 +136,11 @@ export function Dashboard({ treinos, refreshKey }: DashboardProps) {
       />
 
       <div>
-        <EvolucaoChart pesos={pesos} treinos={treinos} />
+        <EvolucaoChart
+          pesos={pesos}
+          treinos={treinos}
+        />
+
         <div className="flex justify-end mt-2">
           <RegistrarPeso onSave={carregarDados} />
         </div>

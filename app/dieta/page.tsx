@@ -7,9 +7,14 @@ export default function DietaPage() {
   const [itens, setItens] = useState<any[]>([])
 
   async function buscarHistoricoDieta() {
+    // 🔒 Pega o usuário ativo para filtrar os dados
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
     const { data, error } = await supabase
       .from('dieta')
       .select('*')
+      .eq('user_id', user.id) // 🔒 Filtro privado
       .order('created_at', { ascending: false })
 
     if (data) setItens(data)
@@ -92,31 +97,30 @@ export default function DietaPage() {
             <section key={data} className="border-l-2 border-blue-500/30 pl-4">
               
               {/* CABEÇALHO DO DIA */}
-<div className="flex items-center justify-between mb-4">
-  <div className="flex items-center gap-2">
-    <h3 className="text-xl font-black text-white">
-      {data === hojeStr ? "Hoje" : data}
-    </h3>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-black text-white">
+                    {data === hojeStr ? "Hoje" : data}
+                  </h3>
 
-    {data !== hojeStr && (
-      <button
-        onClick={() => {
-          // abrir modal ou navegar para edição
-          console.log("Editar dia:", data)
-        }}
-        className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg font-bold transition"
-      >
-        Editar
-      </button>
-    )}
-  </div>
+                  {data !== hojeStr && (
+                    <button
+                      onClick={() => {
+                        console.log("Editar dia:", data)
+                      }}
+                      className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg font-bold transition"
+                    >
+                      Editar
+                    </button>
+                  )}
+                </div>
 
-  <span className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded-md font-bold">
-    {diasAgrupados[data].totais.k} kcal
-</span>
-</div>
+                <span className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded-md font-bold">
+                  {diasAgrupados[data].totais.k} kcal
+                </span>
+              </div>
 
-              {/* RESUMO DE MACROS DO DIA (ESTILO QUE VOCÊ PEDIU) */}
+              {/* RESUMO DE MACROS DO DIA */}
               <div className="grid grid-cols-3 gap-2 mb-4">
                 <div className="bg-[#111] p-2 rounded-xl text-center border border-white/5">
                   <p className="text-[8px] text-gray-500 uppercase">Prot</p>

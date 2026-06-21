@@ -13,7 +13,9 @@ import {
   GripVertical,
   ChevronDown,
   ChevronUp,
-  Edit2
+  Edit2,
+  Flame,
+  CheckCircle2
 } from 'lucide-react'
 
 type Exercicio = {
@@ -24,6 +26,7 @@ type Exercicio = {
   series_reps: string
   ordem: number
   descricao_ficha?: string
+  user_id?: string
 }
 
 const gruposMusculares = {
@@ -34,6 +37,8 @@ const gruposMusculares = {
   Pernas: ['Quadríceps', 'Posterior de Coxa', 'Glúteos', 'Panturrilhas', 'Adutores'],
   Core: ['Abdômen', 'Oblíquos'],
 }
+
+const diasSemana = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'] // 0=Dom ... 6=Sáb
 
 export default function FichaTreinoPage() {
   const [nomeFicha, setNomeFicha] = useState('Treino A')
@@ -55,16 +60,96 @@ export default function FichaTreinoPage() {
   const [fichasAbertas, setFichasAbertas] = useState<string[]>(['Treino A'])
 
   const toggleFicha = (titulo: string) => {
-    setFichasAbertas(prev => 
+    setFichasAbertas(prev =>
       prev.includes(titulo) ? prev.filter(t => t !== titulo) : [...prev, titulo]
     )
   }
 
+  // ---- Agenda de Treino ----
+  const [diasAtivos, setDiasAtivos] = useState<number[]>([])
+  const [streakAtual, setStreakAtual] = useState(0)
+  const [aderencia, setAderencia] = useState(0)
+
+  useEffect(() => { buscarAgenda() }, [])
+
+  async function buscarAgenda() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    // dias planejados
+    const { data: diasData } = await supabase
+      .from('dias_planejados')
+      .select('dia_semana')
+      .eq('user_id', user.id)
+      .eq('ativo', true)
+
+    const planejados = diasData?.map(d => d.dia_semana) || []
+    setDiasAtivos(planejados)
+
+    // streak já existe no perfil
+    const { data: perfilData } = await supabase
+      .from('perfil')
+      .select('streak_dias')
+      .eq('user_id', user.id)
+      .single()
+
+    setStreakAtual(perfilData?.streak_dias || 0)
+
+    // aderência: dias planejados ATÉ HOJE na semana atual vs dias concluídos
+    const inicioSemana = new Date()
+    inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay())
+    inicioSemana.setHours(0, 0, 0, 0)
+
+    const { data: logsData } = await supabase
+      .from('treino_concluido')
+      .select('data')
+      .eq('user_id', user.id)
+      .gte('data', inicioSemana.toISOString().split('T')[0])
+
+    const concluidos = new Set(logsData?.map(l => l.data) || [])
+    const hojeIndex = new Date().getDay()
+    const planejadosAteHoje = planejados.filter(d => d <= hojeIndex)
+
+    if (planejadosAteHoje.length > 0) {
+      const acertos = planejadosAteHoje.filter(diaIndex => {
+        const data = new Date(inicioSemana)
+        data.setDate(data.getDate() + diaIndex)
+        return concluidos.has(data.toISOString().split('T')[0])
+      }).length
+
+      setAderencia(Math.round((acertos / planejadosAteHoje.length) * 100))
+    } else {
+      setAderencia(0)
+    }
+  }
+
+  async function toggleDia(index: number) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const estavaAtivo = diasAtivos.includes(index)
+    setDiasAtivos(prev => estavaAtivo ? prev.filter(d => d !== index) : [...prev, index])
+
+    const { error } = await supabase
+      .from('dias_planejados')
+      .upsert(
+        { user_id: user.id, dia_semana: index, ativo: !estavaAtivo },
+        { onConflict: 'user_id,dia_semana' }
+      )
+
+    if (error) buscarAgenda() // reverte visualmente se falhar
+  }
+
+  // Buscar fichas apenas do usuário logado
   async function buscarFicha() {
     setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return setLoading(false)
+
     const { data, error } = await supabase
       .from('rotinas')
       .select('*')
+      .eq('user_id', user.id) // 🔒 Filtrando por usuário
       .order('nome_ficha', { ascending: true })
       .order('ordem', { ascending: true })
 
@@ -77,16 +162,29 @@ export default function FichaTreinoPage() {
   async function apagarCategoria(titulo: string, e: React.MouseEvent) {
     e.stopPropagation()
     if (!window.confirm(`Deseja apagar todos os exercícios do ${titulo}?`)) return
-    const { error } = await supabase.from('rotinas').delete().eq('nome_ficha', titulo)
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { error } = await supabase
+      .from('rotinas')
+      .delete()
+      .eq('nome_ficha', titulo)
+      .eq('user_id', user.id) // 🔒 Proteção
+
     if (!error) buscarFicha()
   }
 
   async function salvarDescricaoFicha(titulo: string, e: React.MouseEvent) {
     e.stopPropagation()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
     const { error } = await supabase
       .from('rotinas')
       .update({ descricao_ficha: novaDescricaoFicha })
       .eq('nome_ficha', titulo)
+      .eq('user_id', user.id) // 🔒 Proteção
 
     if (!error) {
       setEditandoFicha(null)
@@ -109,8 +207,11 @@ export default function FichaTreinoPage() {
     setLista(listaAtualizada)
 
     try {
-      const updates = itensDaFicha.map((item, index) => 
-        supabase.from('rotinas').update({ ordem: index }).eq('id', item.id)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const updates = itensDaFicha.map((item, index) =>
+        supabase.from('rotinas').update({ ordem: index }).eq('id', item.id).eq('user_id', user.id)
       )
       await Promise.all(updates)
     } catch (err) { buscarFicha() }
@@ -119,28 +220,44 @@ export default function FichaTreinoPage() {
   async function adicionarAFicha(e: React.FormEvent) {
     e.preventDefault()
     if (!exercicio.trim()) return
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return alert('Faça login para salvar treinos.')
+
     const ultimaOrdem = lista.filter(i => i.nome_ficha === nomeFicha).length
     const descExistente = lista.find(i => i.nome_ficha === nomeFicha)?.descricao_ficha
 
     const { error } = await supabase.from('rotinas').insert([{
-        nome_ficha: nomeFicha, exercicio: exercicio.trim(), grupo_muscular: grupo,
-        series_reps: series.trim(), ordem: ultimaOrdem, descricao_ficha: descExistente
+        nome_ficha: nomeFicha,
+        exercicio: exercicio.trim(),
+        grupo_muscular: grupo,
+        series_reps: series.trim(),
+        ordem: ultimaOrdem,
+        descricao_ficha: descExistente,
+        user_id: user.id // 🔒 Gravando o dono do registro
     }])
     if (!error) { setExercicio(''); setSeries(''); buscarFicha() }
   }
 
   async function salvarEdicao(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
     const { error } = await supabase.from('rotinas').update({
         exercicio: editNome, series_reps: editSeries, grupo_muscular: editGrupo
-    }).eq('id', id)
+    }).eq('id', id).eq('user_id', user.id) // 🔒 Proteção
+
     if (!error) { setEditandoId(null); buscarFicha() }
   }
 
   async function removerDaFicha(id: string, e: React.MouseEvent) {
     e.stopPropagation()
     if (!window.confirm('Remover exercício?')) return
-    const { error } = await supabase.from('rotinas').delete().eq('id', id)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { error } = await supabase.from('rotinas').delete().eq('id', id).eq('user_id', user.id) // 🔒 Proteção
     if (!error) buscarFicha()
   }
 
@@ -155,7 +272,7 @@ export default function FichaTreinoPage() {
   return (
     <main className="min-h-screen bg-black text-white p-4 pb-32 font-sans selection:bg-blue-500/30">
       <div className="max-w-md mx-auto pt-4">
-        
+
         <header className="mb-8 px-2 flex justify-between items-center">
           <div className="flex flex-col">
             <h1 className="text-5xl font-black italic text-blue-500 leading-none uppercase tracking-tighter">ROTINA</h1>
@@ -187,15 +304,62 @@ export default function FichaTreinoPage() {
           </div>
         </form>
 
+        {/* AGENDA DE TREINO */}
+        <div className="bg-[#0c0c0c] border border-white/[0.05] rounded-[2rem] p-6 mb-10 shadow-2xl">
+          <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] mb-5">
+            Agenda de Treino
+          </h3>
+
+          <div className="flex justify-between gap-2 mb-6">
+            {diasSemana.map((dia, index) => {
+              const ativo = diasAtivos.includes(index)
+              return (
+                <button
+                  key={index}
+                  onClick={() => toggleDia(index)}
+                  className={`flex-1 aspect-square rounded-full flex items-center justify-center text-xs font-black transition-all active:scale-95 ${
+                    ativo
+                      ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.4)]'
+                      : 'bg-black border border-white/10 text-gray-600'
+                  }`}
+                >
+                  {dia}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-black/40 border border-white/[0.04] rounded-2xl p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <Flame size={16} className="text-orange-500" />
+                <span className="text-xl font-black text-white">{streakAtual}</span>
+              </div>
+              <p className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">
+                Streak (dias)
+              </p>
+            </div>
+            <div className="bg-black/40 border border-white/[0.04] rounded-2xl p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <CheckCircle2 size={16} className="text-green-500" />
+                <span className="text-xl font-black text-white">{aderencia}%</span>
+              </div>
+              <p className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">
+                Aderência
+              </p>
+            </div>
+          </div>
+        </div>
+
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="space-y-6">
             {!loading && Object.keys(fichasAgrupadas).map((titulo) => {
               const isExpanded = fichasAbertas.includes(titulo);
               const descricao = fichasAgrupadas[titulo][0]?.descricao_ficha || "Definir músculos";
-              
+
               return (
                 <div key={titulo} className="bg-[#0c0c0c]/50 rounded-[2.5rem] border border-white/[0.02] overflow-hidden">
-                  <div 
+                  <div
                     onClick={() => toggleFicha(titulo)}
                     className="p-6 cursor-pointer active:bg-white/[0.03] transition-colors"
                   >
@@ -218,8 +382,8 @@ export default function FichaTreinoPage() {
                     <div className="flex items-center gap-2 pl-4">
                         {editandoFicha === titulo ? (
                             <div className="flex gap-2 w-full items-center" onClick={(e) => e.stopPropagation()}>
-                                <input 
-                                    value={novaDescricaoFicha} 
+                                <input
+                                    value={novaDescricaoFicha}
                                     onChange={(e) => setNovaDescricaoFicha(e.target.value)}
                                     placeholder="Ex: Peito, Tríceps..."
                                     className="bg-black border border-blue-500/30 rounded-lg px-2 py-1 text-[11px] w-full outline-none text-blue-400"
@@ -233,7 +397,7 @@ export default function FichaTreinoPage() {
                                 <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest truncate max-w-[200px]">
                                     {descricao}
                                 </p>
-                                <button 
+                                <button
                                     onClick={(e) => { e.stopPropagation(); setEditandoFicha(titulo); setNovaDescricaoFicha(descricao); }}
                                     className="text-gray-700 p-1 opacity-60 active:opacity-100"
                                 >

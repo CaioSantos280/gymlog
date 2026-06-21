@@ -22,9 +22,14 @@ export default function DashboardPage() {
   })
 
   async function buscarDados() {
+    // 🔒 Captura o usuário ativo para carregar os gráficos privados
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
     const { data: treinos, error } = await supabase
       .from('treinos')
       .select('*')
+      .eq('user_id', user.id) // 🔒 Gráfico filtrado por usuário
       .order('created_at', { ascending: true })
 
     if (error) {
@@ -35,14 +40,12 @@ export default function DashboardPage() {
     if (treinos && treinos.length > 0) {
       // 1. AGRUPAR VOLUME POR DIA
       const agrupado = treinos.reduce((acc: any, treino) => {
-        // Garantindo que a data seja tratada como string local (DD/MM)
         const dateObj = new Date(treino.created_at)
         const dataFormatada = dateObj.toLocaleDateString('pt-BR', {
           day: '2-digit',
           month: '2-digit',
         })
 
-        // Se o nome da coluna no seu banco for 'carga_total' ou 'volume', ele pega o que existir
         const volumeTreino = Number(treino.volume || treino.carga_total || 0)
 
         acc[dataFormatada] = (acc[dataFormatada] || 0) + volumeTreino
@@ -65,12 +68,11 @@ export default function DashboardPage() {
       const diasAtivos = diasUnicos.size
       const totalTreinos = treinos.length
       
-      // Média formatada como string para o toFixed não quebrar o estado
       const mediaTreinosPorDia = diasAtivos > 0 
         ? (totalTreinos / diasAtivos).toFixed(1) 
         : "0"
 
-      const melhorDia = Object.entries(agrupado).sort(
+      const mejorDia = Object.entries(agrupado).sort(
         (a: any, b: any) => (b[1] as number) - (a[1] as number)
       )[0]
 
@@ -80,8 +82,18 @@ export default function DashboardPage() {
         diasAtivos,
         totalTreinos,
         mediaTreinosPorDia,
-        melhorDia,
+        melhorDia: mejorDia,
         ultimoTreino,
+      })
+    } else {
+      // Zera o estado se o usuário não tiver treinos
+      setData([])
+      setStats({
+        diasAtivos: 0,
+        totalTreinos: 0,
+        mediaTreinosPorDia: "0",
+        melhorDia: null,
+        ultimoTreino: null
       })
     }
   }

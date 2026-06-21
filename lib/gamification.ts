@@ -1,5 +1,5 @@
 // lib/gamification.ts
-// Lógica central de XP / Rank / Streak / PR do GYMLOG com trava de registro único.
+// Lógica central de XP / Rank / Streak / PR do GYMLOG (Migrado para Autenticação).
 
 import { supabase } from './supabase'
 import { calcularProgressoRank, RANKS } from './ranks'
@@ -40,45 +40,63 @@ export interface ResultadoProcessamento {
   rankAnterior: string
 }
 
-// Chave fixa para garantir que o app local/sem auth use rigorosamente a MESMA linha
-const ID_PERFIL_UNICO = '00000000-0000-0000-0000-000000000000'
+/** Busca o perfil único do usuário vinculado ao seu Auth UID. Transfere dados se necessário. */
+export async function buscarOuCriarPerfil(userId: string): Promise<Perfil | null> {
+  const ID_FIXO_ANTIGO = '93d8f826-2ff0-4a1a-84af-a073ffe4d6b6'
 
-/** Busca o perfil único ou força a criação/atualização usando ID fixo para evitar duplicatas */
-export async function buscarOuCriarPerfil(): Promise<Perfil | null> {
-  // Tenta buscar a linha com o ID fixo travado
-  const { data, error } = await supabase
+  // 1. Tenta buscar o perfil já atrelado ao user_id real logado
+  const { data: perfilLogado, error: erroLogado } = await supabase
     .from('perfil')
     .select('*')
-    .eq('id', ID_PERFIL_UNICO)
+    .eq('user_id', userId)
     .maybeSingle()
 
-  if (error) {
-    console.error('Erro ao buscar perfil:', error.message)
+  if (erroLogado) {
+    console.error('Erro ao buscar perfil logado:', erroLogado.message)
     return null
   }
 
-  if (data) return data as Perfil
+  if (perfilLogado) return perfilLogado as Perfil
 
-  // Se não existir (ou se você limpou a tabela), cria cravando o ID único.
-  // Usamos .upsert com onConflict para blindar de vez contra duas requisições simultâneas
-  const { data: novo, error: erroUpsert } = await supabase
+  // 2. Se não achou, verifica se o perfil antigo do mock ainda está sem dono (user_id é NULL)
+  const { data: perfilAntigo } = await supabase
     .from('perfil')
-    .upsert(
-      { 
-        id: ID_PERFIL_UNICO,
-        xp_atual: 0, 
-        rank_nome: RANKS[0].nome, 
-        streak_dias: 0,
-        avatar_id: 'default',
-        nome_usuario: 'Atleta GYMLOG'
-      },
-      { onConflict: 'id' }
-    )
+    .select('*')
+    .eq('id', ID_FIXO_ANTIGO)
+    .maybeSingle()
+
+  if (perfilAntigo && !perfilAntigo.user_id) {
+    // 🔥 Migração mágica: Atualiza a linha antiga injetando seu user_id real nela
+    const { data: migrado, error: erroMigrar } = await supabase
+      .from('perfil')
+      .update({ user_id: userId, updated_at: new Date().toISOString() })
+      .eq('id', ID_FIXO_ANTIGO)
+      .select()
+      .single()
+
+    if (erroMigrar) {
+      console.error('Erro ao migrar perfil antigo:', erroMigrar.message)
+    } else if (migrado) {
+      console.log('🎉 Perfil antigo migrado com sucesso para o usuário:', userId)
+      return migrado as Perfil
+    }
+  }
+
+  // 3. Caso não exista perfil antigo ou ele já tenha dono, cria um do zero para o usuário logado
+  const { data: novo, error: erroInsert } = await supabase
+    .from('perfil')
+    .insert([{ 
+      user_id: userId,
+      xp_atual: 0, 
+      rank_nome: RANKS[0].nome, 
+      streak_dias: 0,
+      avatar_id: 'default'
+    }])
     .select()
     .single()
 
-  if (erroUpsert) {
-    console.error('Erro ao garantir perfil único:', erroUpsert.message)
+  if (erroInsert) {
+    console.error('Erro ao criar novo perfil:', erroInsert.message)
     return null
   }
 
@@ -95,17 +113,14 @@ function diaAnteriorISO(dataISO: string): string {
   return d.toISOString().split('T')[0]
 }
 
-/** Calcula o novo streak com base na última data de treino registrada. */
 function calcularNovoStreak(streakAtual: number, ultimaData: string | null): number {
   const hoje = hojeISO()
-
   if (!ultimaData) return 1
   if (ultimaData === hoje) return streakAtual
   if (ultimaData === diaAnteriorISO(hoje)) return streakAtual + 1
   return 1
 }
 
-/** Retorna XP bônus de streak, se algum marco foi batido exatamente agora. */
 function bonusDeStreak(novoStreak: number): { xp: number; label: string } | null {
   if (novoStreak === 100) return { xp: XP_RULES.STREAK_100_DIAS, label: '🔥 100 dias de sequência' }
   if (novoStreak === 30) return { xp: XP_RULES.STREAK_30_DIAS, label: '🔥 30 dias de sequência' }
@@ -113,33 +128,29 @@ function bonusDeStreak(novoStreak: number): { xp: number; label: string } | null
   return null
 }
 
-/** Verifica no histórico se o peso do treino bate o recorde anterior e atualiza a carga antiga */
-async function verificarERegistrarPR(exercicio: string, peso: number): Promise<boolean> {
+/** Verifica no histórico se o peso do treino bate o recorde anterior do exercício. */
+async function verificarERegistrarPR(exercicio: string, peso: number, userId: string): Promise<boolean> {
   const { data: recordeAtual } = await supabase
     .from('prs')
     .select('id, carga')
     .eq('exercicio', exercicio)
+    .or(`user_id.eq.${userId},user_id.is.null`)
+    .order('carga', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
-  // Se já existir um recorde para esse exercício
   if (recordeAtual) {
-    if (peso <= recordeAtual.carga) return false // Não bateu o recorde antigo
+    if (peso <= recordeAtual.carga) return false
 
-    // Atualiza a MESMA linha do exercício com a nova carga maior
     const { error } = await supabase
       .from('prs')
       .update({ carga: peso, created_at: new Date().toISOString() })
       .eq('id', recordeAtual.id)
 
-    if (error) console.error('Erro ao atualizar PR:', error.message)
     return !error
   }
 
-  // Se for a primeira vez fazendo o exercício, insere uma nova linha para ele
-  const { error } = await supabase
-    .from('prs')
-    .insert([{ exercicio, carga: peso }])
-    
+  const { error } = await supabase.from('prs').insert([{ exercicio, carga: peso, user_id: userId }])
   if (error) {
     console.error('Erro ao salvar novo PR:', error.message)
     return false
@@ -147,37 +158,29 @@ async function verificarERegistrarPR(exercicio: string, peso: number): Promise<b
   return true
 }
 
-/** Atualiza o avatar equipado pelo usuário e persiste no Supabase. */
 export async function salvarAvatarSelecionado(perfilId: string, avatarId: string): Promise<boolean> {
   const { error } = await supabase
     .from('perfil')
     .update({ avatar_id: avatarId, updated_at: new Date().toISOString() })
     .eq('id', perfilId)
 
-  if (error) {
-    console.error('Erro ao salvar avatar:', error.message)
-    return false
-  }
-  return true
+  return !error
 }
 
-/** Atualiza o nome de usuário exibido no perfil. */
 export async function salvarNomeUsuario(perfilId: string, nome: string): Promise<boolean> {
   const { error } = await supabase
     .from('perfil')
     .update({ nome_usuario: nome, updated_at: new Date().toISOString() })
     .eq('id', perfilId)
 
-  if (error) {
-    console.error('Erro ao salvar nome:', error.message)
-    return false
-  }
-  return true
+  return !error
 }
 
-/** Processa um treino recém-salvo atualizando rigorosamente a mesma linha do perfil */
 export async function processarNovoTreino(input: NovoTreinoInput): Promise<ResultadoProcessamento | null> {
-  const perfil = await buscarOuCriarPerfil()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const perfil = await buscarOuCriarPerfil(user.id)
   if (!perfil) return null
 
   const detalheXp: string[] = []
@@ -185,7 +188,7 @@ export async function processarNovoTreino(input: NovoTreinoInput): Promise<Resul
   detalheXp.push(`+${XP_RULES.REGISTRAR_TREINO} XP — treino registrado`)
   detalheXp.push(`+${XP_RULES.TREINO_CONCLUIDO} XP — treino concluído`)
 
-  const ehNovoRecorde = await verificarERegistrarPR(input.exercicio, input.peso)
+  const ehNovoRecorde = await verificarERegistrarPR(input.exercicio, input.peso, user.id)
   if (ehNovoRecorde) {
     xpGanho += XP_RULES.NOVO_PR
     detalheXp.push(`+${XP_RULES.NOVO_PR} XP — novo PR 🏆`)
@@ -201,9 +204,7 @@ export async function processarNovoTreino(input: NovoTreinoInput): Promise<Resul
   const xpNovo = perfil.xp_atual + xpGanho
   const rankAnterior = perfil.rank_nome
   const novoProgresso = calcularProgressoRank(xpNovo)
-  const rankSubiu = novoProgresso.atual.nome !== rankAnterior
 
-  // Faz a atualização cravada no ID do perfil ativo
   const { data: perfilAtualizado, error } = await supabase
     .from('perfil')
     .update({
@@ -217,17 +218,14 @@ export async function processarNovoTreino(input: NovoTreinoInput): Promise<Resul
     .select()
     .single()
 
-  if (error) {
-    console.error('Erro ao atualizar perfil:', error.message)
-    return null
-  }
+  if (error) return null
 
   return {
     perfil: perfilAtualizado as Perfil,
     xpGanho,
     detalheXp,
     ehNovoRecorde,
-    rankSubiu,
+    rankSubiu: novoProgresso.atual.nome !== rankAnterior,
     rankAnterior,
   }
 }
