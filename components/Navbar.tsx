@@ -15,6 +15,8 @@ export function Navbar() {
   const lastScrollY = useRef(0)
   const router = useRouter()
   const pathname = usePathname()
+  const hideNavbar = pathname === '/login'
+  
 
   useEffect(() => {
     const checkUser = async () => {
@@ -99,6 +101,7 @@ export function Navbar() {
   const initial = user?.email?.charAt(0).toUpperCase()
   const isMoreActive = sheetItems.some((item) => item.href === pathname)
   const isHomeActive = pathname === '/'
+  if (hideNavbar) return null
 
   return (
     <>

@@ -40,11 +40,11 @@ export interface ResultadoProcessamento {
   rankAnterior: string
 }
 
-/** Busca o perfil único do usuário vinculado ao seu Auth UID. Transfere dados se necessário. */
+/** Busca o perfil do usuário. O Trigger no banco já cria o perfil automaticamente no Sign Up. */
 export async function buscarOuCriarPerfil(userId: string): Promise<Perfil | null> {
   const ID_FIXO_ANTIGO = '93d8f826-2ff0-4a1a-84af-a073ffe4d6b6'
 
-  // 1. Tenta buscar o perfil já atrelado ao user_id real logado
+  // 1. Busca o perfil atrelado ao user_id real
   const { data: perfilLogado, error: erroLogado } = await supabase
     .from('perfil')
     .select('*')
@@ -58,7 +58,7 @@ export async function buscarOuCriarPerfil(userId: string): Promise<Perfil | null
 
   if (perfilLogado) return perfilLogado as Perfil
 
-  // 2. Se não achou, verifica se o perfil antigo do mock ainda está sem dono (user_id é NULL)
+  // 2. Tenta migrar perfil antigo caso exista (logica de transicao)
   const { data: perfilAntigo } = await supabase
     .from('perfil')
     .select('*')
@@ -66,7 +66,6 @@ export async function buscarOuCriarPerfil(userId: string): Promise<Perfil | null
     .maybeSingle()
 
   if (perfilAntigo && !perfilAntigo.user_id) {
-    // 🔥 Migração mágica: Atualiza a linha antiga injetando seu user_id real nela
     const { data: migrado, error: erroMigrar } = await supabase
       .from('perfil')
       .update({ user_id: userId, updated_at: new Date().toISOString() })
@@ -74,33 +73,12 @@ export async function buscarOuCriarPerfil(userId: string): Promise<Perfil | null
       .select()
       .single()
 
-    if (erroMigrar) {
-      console.error('Erro ao migrar perfil antigo:', erroMigrar.message)
-    } else if (migrado) {
-      console.log('🎉 Perfil antigo migrado com sucesso para o usuário:', userId)
-      return migrado as Perfil
-    }
+    if (!erroMigrar && migrado) return migrado as Perfil
   }
 
-  // 3. Caso não exista perfil antigo ou ele já tenha dono, cria um do zero para o usuário logado
-  const { data: novo, error: erroInsert } = await supabase
-    .from('perfil')
-    .insert([{ 
-      user_id: userId,
-      xp_atual: 0, 
-      rank_nome: RANKS[0].nome, 
-      streak_dias: 0,
-      avatar_id: 'default'
-    }])
-    .select()
-    .single()
-
-  if (erroInsert) {
-    console.error('Erro ao criar novo perfil:', erroInsert.message)
-    return null
-  }
-
-  return novo as Perfil
+  // 3. Se não achou, retornamos null. O Trigger deve garantir que o perfil já exista.
+  console.warn('Perfil não encontrado para o usuário:', userId)
+  return null
 }
 
 function hojeISO(): string {
@@ -128,7 +106,6 @@ function bonusDeStreak(novoStreak: number): { xp: number; label: string } | null
   return null
 }
 
-/** Verifica no histórico se o peso do treino bate o recorde anterior do exercício. */
 async function verificarERegistrarPR(exercicio: string, peso: number, userId: string): Promise<boolean> {
   const { data: recordeAtual } = await supabase
     .from('prs')
@@ -141,21 +118,15 @@ async function verificarERegistrarPR(exercicio: string, peso: number, userId: st
 
   if (recordeAtual) {
     if (peso <= recordeAtual.carga) return false
-
     const { error } = await supabase
       .from('prs')
       .update({ carga: peso, created_at: new Date().toISOString() })
       .eq('id', recordeAtual.id)
-
     return !error
   }
 
   const { error } = await supabase.from('prs').insert([{ exercicio, carga: peso, user_id: userId }])
-  if (error) {
-    console.error('Erro ao salvar novo PR:', error.message)
-    return false
-  }
-  return true
+  return !error
 }
 
 export async function salvarAvatarSelecionado(perfilId: string, avatarId: string): Promise<boolean> {
@@ -163,7 +134,6 @@ export async function salvarAvatarSelecionado(perfilId: string, avatarId: string
     .from('perfil')
     .update({ avatar_id: avatarId, updated_at: new Date().toISOString() })
     .eq('id', perfilId)
-
   return !error
 }
 
@@ -172,7 +142,6 @@ export async function salvarNomeUsuario(perfilId: string, nome: string): Promise
     .from('perfil')
     .update({ nome_usuario: nome, updated_at: new Date().toISOString() })
     .eq('id', perfilId)
-
   return !error
 }
 
